@@ -1,6 +1,6 @@
 # ubxgps
 
-Arduino sample sketch of uBlox position and altitude in UBX Binary mode
+Arduino sample sketch of uBlox position and altitude in UBX Binary mode. based on Sparkfun GPS Library (https://github.com/sparkfun/SparkFun_Ublox_Arduino_Library)
 
 ### Hardware setup
 
