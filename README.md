@@ -16,3 +16,13 @@ https://learn.adafruit.com/adafruit-feather-32u4-basic-proto/pinouts
 * Connect GPS 3V3 and GND to Feather 32U4 3V3/GND Pair 2
 * Connect Feather 32U4 TX to GPS RX, 32U4 RX to GPS TX
 * Power is provided by Feather onboard 500mA peak AP2112K-3.3.
+```
+
+SparkFun Ublox Example
+GPS: trying 38400 baud
+GPS serial connected
+Current update rate:1
+Lat: xxxx Long: -yyyy (degrees * 10^-7) Alt: 86090 (mm) SIV: 14 Fix: 3D RTK: 0 Speed: 4 (mm/s) Heading: 27287756 (degrees * 10^-5) pDOP: 1.32
+
+
+```
