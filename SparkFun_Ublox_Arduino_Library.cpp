@@ -10,7 +10,7 @@
 
 	Written by Nathan Seidle @ SparkFun Electronics, September 6th, 2018
 
-	This library handles configuring and handling the responses 
+	This library handles configuring and handling the responses
 	from a Ublox GPS module. Works with most modules from Ublox including
 	the Zed-F9P, NEO-M8P-2, NEO-M9N, ZOE-M8Q, SAM-M8Q, and many others.
 
@@ -22,19 +22,19 @@
 	SparkFun code, firmware, and software is released under the MIT License(http://opensource.org/licenses/MIT).
 	The MIT License (MIT)
 	Copyright (c) 2016 SparkFun Electronics
-	Permission is hereby granted, free of charge, to any person obtaining a copy of this software and 
-	associated documentation files (the "Software"), to deal in the Software without restriction, 
-	including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
-	and/or sell copies of the Software, and to permit persons to whom the Software is furnished to 
+	Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+	associated documentation files (the "Software"), to deal in the Software without restriction,
+	including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
+	and/or sell copies of the Software, and to permit persons to whom the Software is furnished to
 	do so, subject to the following conditions:
 
-	The above copyright notice and this permission notice shall be included in all copies or substantial 
+	The above copyright notice and this permission notice shall be included in all copies or substantial
 	portions of the Software.
 
-	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT 
-	NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. 
-	IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
-	WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE 
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+	NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+	IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+	WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 	SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
@@ -224,7 +224,12 @@ void SFE_UBLOX_GPS::setSerialRate(uint32_t baudrate, uint8_t uartPort, uint16_t 
     _debugSerial->println(((uint32_t)payloadCfg[10] << 16) | ((uint32_t)payloadCfg[9] << 8) | payloadCfg[8]);
   }
 
-  sendCommand(packetCfg, maxWait);
+  sfe_ublox_status_e retVal = sendCommand(packetCfg, maxWait);
+  if (_printDebug == true)
+  {
+    _debugSerial->print(F("setSerialRate: sendCommand returned: "));
+    _debugSerial->println(statusString(retVal));
+  }
 }
 
 //Changes the I2C address that the Ublox module responds to
@@ -242,7 +247,7 @@ boolean SFE_UBLOX_GPS::setI2CAddress(uint8_t deviceAddress, uint16_t maxWait)
   //payloadCfg is now loaded with current bytes. Change only the ones we need to
   payloadCfg[4] = deviceAddress << 1; //DDC mode LSB
 
-  if (sendCommand(packetCfg, maxWait) == true)
+  if (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT) // We are only expecting an ACK
   {
     //Success! Now change our internal global.
     _gpsI2Caddress = deviceAddress; //Store the I2C address from user
@@ -288,7 +293,10 @@ boolean SFE_UBLOX_GPS::checkUbloxI2C()
       if (lsb == 0xFF)
       {
         //I believe this is a Ublox bug. Device should never present an 0xFF.
-        debugPrintln((char *)F("checkUbloxI2C: Ublox bug, no bytes available"));
+        if (_printDebug == true)
+        {
+          _debugSerial->println(F("checkUbloxI2C: Ublox bug, no bytes available"));
+        }
         if (checksumFailurePin >= 0)
         {
           digitalWrite((uint8_t)checksumFailurePin, LOW);
@@ -303,7 +311,10 @@ boolean SFE_UBLOX_GPS::checkUbloxI2C()
 
     if (bytesAvailable == 0)
     {
-      debugPrintln((char *)F("checkUbloxI2C: OK, zero bytes available"));
+      if (_printDebug == true)
+      {
+        _debugSerial->println(F("checkUbloxI2C: OK, zero bytes available"));
+      }
       lastCheck = millis(); //Put off checking to avoid I2C bus traffic
       return (false);
     }
@@ -375,7 +386,10 @@ boolean SFE_UBLOX_GPS::checkUbloxI2C()
           {
             if (incoming == 0x7F)
             {
-              debugPrintln((char *)F("checkUbloxU2C: Ublox error, module not ready with data"));
+              if (_printDebug == true)
+              {
+                _debugSerial->println(F("checkUbloxU2C: Ublox error, module not ready with data"));
+              }
               delay(5); //In logic analyzation, the module starting responding after 1.48ms
               if (checksumFailurePin >= 0)
               {
@@ -458,13 +472,13 @@ void SFE_UBLOX_GPS::process(uint8_t incoming)
       if (incoming == UBX_CLASS_ACK)
       {
         packetAck.counter = 0;
-        packetAck.valid = false;
+        packetAck.valid = SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
         ubxFrameClass = CLASS_ACK;
       }
       else
       {
         packetCfg.counter = 0;
-        packetCfg.valid = false;
+        packetCfg.valid = SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
         ubxFrameClass = CLASS_NOT_AN_ACK;
       }
     }
@@ -559,7 +573,7 @@ void SFE_UBLOX_GPS::processRTCM(uint8_t incoming)
 }
 
 //Given a character, file it away into the uxb packet structure
-//Set valid = true once sentence is completely received and passes CRC
+//Set valid to VALID or NOT_VALID once sentence is completely received and passes or fails CRC
 //The payload portion of the packet can be 100s of bytes but the max array
 //size is roughly 64 bytes. startingSpot can be set so we only record
 //a subset of bytes within a larger packet.
@@ -599,7 +613,7 @@ void SFE_UBLOX_GPS::processUBX(uint8_t incoming, ubxPacket *incomingUBX)
     //Validate this sentence
     if (incomingUBX->checksumA == rollingChecksumA && incomingUBX->checksumB == rollingChecksumB)
     {
-      incomingUBX->valid = true;
+      incomingUBX->valid = SFE_UBLOX_PACKET_VALIDITY_VALID;
 
       if (_printDebug == true)
       {
@@ -608,16 +622,28 @@ void SFE_UBLOX_GPS::processUBX(uint8_t incoming, ubxPacket *incomingUBX)
         _debugSerial->print(F(" Received: "));
         printPacket(incomingUBX);
 
-        if (packetCfg.valid == true)
-          debugPrintln((char *)F("packetCfg now valid"));
-        if (packetAck.valid == true)
-          debugPrintln((char *)F("packetAck now valid"));
+        if (packetCfg.valid == SFE_UBLOX_PACKET_VALIDITY_VALID)
+        {
+          if (_printDebug == true)
+          {
+            _debugSerial->println(F("packetCfg now valid"));
+          }
+        }
+        if (packetAck.valid == SFE_UBLOX_PACKET_VALIDITY_VALID)
+        {
+          if (_printDebug == true)
+          {
+            _debugSerial->println(F("packetAck now valid"));
+          }
+        }
       }
 
       processUBXpacket(incomingUBX); //We've got a valid packet, now do something with it
     }
-    else
+    else  // Checksum failure
     {
+      incomingUBX->valid = SFE_UBLOX_PACKET_VALIDITY_NOT_VALID;
+
       if (_printDebug == true)
       {
         //Drive an external pin to allow for easier logic analyzation
@@ -628,7 +654,7 @@ void SFE_UBLOX_GPS::processUBX(uint8_t incoming, ubxPacket *incomingUBX)
           digitalWrite((uint8_t)checksumFailurePin, HIGH);
         }
 
-        debugPrint((char *)F("Checksum failed:"));
+        _debugSerial->print(F("Checksum failed:"));
         _debugSerial->print(F(" checksumA: "));
         _debugSerial->print(incomingUBX->checksumA);
         _debugSerial->print(F(" checksumB: "));
@@ -686,13 +712,19 @@ void SFE_UBLOX_GPS::processUBXpacket(ubxPacket *msg)
     if (msg->id == UBX_ACK_ACK && msg->payload[0] == packetCfg.cls && msg->payload[1] == packetCfg.id)
     {
       //The ack we just received matched the CLS/ID of last packetCfg sent (or received)
-      debugPrintln((char *)F("UBX ACK: Command sent/ack'd successfully"));
+      if (_printDebug == true)
+      {
+        _debugSerial->println(F("UBX ACK: Command sent/ack'd successfully"));
+      }
       commandAck = UBX_ACK_ACK;
     }
     else if (msg->id == UBX_ACK_NACK && msg->payload[0] == packetCfg.cls && msg->payload[1] == packetCfg.id)
     {
       //The ack we just received matched the CLS/ID of last packetCfg sent
-      debugPrintln((char *)F("UBX ACK: Not-Acknowledged"));
+      if (_printDebug == true)
+      {
+        _debugSerial->println(F("UBX ACK: Not-Acknowledged"));
+      }
       commandAck = UBX_ACK_NACK;
     }
     break;
@@ -722,7 +754,7 @@ void SFE_UBLOX_GPS::processUBXpacket(ubxPacket *msg)
       altitudeMSL = extractLong(36 - startingSpot);
       groundSpeed = extractLong(60 - startingSpot);
       headingOfMotion = extractLong(64 - startingSpot);
-      pDOP = extractLong(76 - startingSpot);
+      pDOP = extractInt(76 - startingSpot);
 
       //Mark all datums as fresh (not read before)
       moduleQueried.gpsiTOW = true;
@@ -817,7 +849,10 @@ sfe_ublox_status_e SFE_UBLOX_GPS::sendCommand(ubxPacket outgoingUBX, uint16_t ma
     retVal = sendI2cCommand(outgoingUBX, maxWait);
     if (retVal != SFE_UBLOX_STATUS_SUCCESS)
     {
-      debugPrintln((char *)F("Send I2C Command failed"));
+      if (_printDebug == true)
+      {
+        _debugSerial->println(F("Send I2C Command failed"));
+      }
       return retVal;
     }
   }
@@ -831,12 +866,18 @@ sfe_ublox_status_e SFE_UBLOX_GPS::sendCommand(ubxPacket outgoingUBX, uint16_t ma
     //Depending on what we just sent, either we need to look for an ACK or not
     if (outgoingUBX.cls == UBX_CLASS_CFG)
     {
-      debugPrintln((char *)F("sendCommand: Waiting for ACK response"));
+      if (_printDebug == true)
+      {
+        _debugSerial->println(F("sendCommand: Waiting for ACK response"));
+      }
       retVal = waitForACKResponse(outgoingUBX.cls, outgoingUBX.id, maxWait); //Wait for Ack response
     }
     else
     {
-      debugPrintln((char *)F("sendCommand: Waiting for No ACK response"));
+      if (_printDebug == true)
+      {
+        _debugSerial->println(F("sendCommand: Waiting for No ACK response"));
+      }
       retVal = waitForNoACKResponse(outgoingUBX.cls, outgoingUBX.id, maxWait); //Wait for Ack response
     }
   }
@@ -926,7 +967,7 @@ void SFE_UBLOX_GPS::sendSerialCommand(ubxPacket outgoingUBX)
 }
 
 //Returns true if I2C device ack's
-boolean SFE_UBLOX_GPS::isConnected()
+boolean SFE_UBLOX_GPS::isConnected(uint16_t maxWait)
 {
   if (commType == COMM_TYPE_I2C)
   {
@@ -941,7 +982,7 @@ boolean SFE_UBLOX_GPS::isConnected()
     packetCfg.len = 0;
     packetCfg.startingSpot = 0;
 
-    return sendCommand(packetCfg);
+    return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_RECEIVED); // We are polling the RATE so we expect data and an ACK
   }
   return false;
 }
@@ -1028,18 +1069,30 @@ void SFE_UBLOX_GPS::printPacket(ubxPacket *packet)
 //"not acknowledge"(UBX-ACK-NAK) message back to the sender, depending on whether or not the message was processed correctly.
 //Some messages from other classes also use the same acknowledgement mechanism.
 
-//If the packetCfg len is 1, then we are querying the device for data
-//If the packetCfg len is >1, then we are sending a new setting
+//When we poll or get a setting, we will receive _both_ a config packet and an ACK
+//If the poll or get request is not valid, we will receive _only_ a NACK
 
-//Returns true if we got the following:
-//* If packetCfg len is 1 and we got and ACK and a valid packetCfg (module is responding with register content)
-//* If packetCfg len is >1 and we got an ACK (no valid packetCfg needed, module absorbs new register data)
-//Returns false if we timed out, got a NACK (command unknown), or had a CLS/ID mismatch
+//If we are trying to get or poll a setting, then packetCfg.len will be 0 or 1 when the packetCfg is _sent_.
+//If we poll the setting for a particular port using UBX-CFG-PRT then .len will be 1 initially
+//For all other gets or polls, .len will be 0 initially
+//(It would be possible for .len to be 2 _if_ we were using UBX-CFG-MSG to poll the settings for a particular message - but we don't use that (currently))
+
+//If the get or poll _fails_, i.e. is NACK'd, then packetCfg.len could still be 0 or 1 after the NACK is received
+//But if the get or poll is ACK'd, then packetCfg.len will have been updated by the incoming data and will always be at least 2
+
+//If we are going to set the value for a setting, then packetCfg.len will be at least 3 when the packetCfg is _sent_.
+//(UBX-CFG-MSG appears to have the shortest set length of 3 bytes)
+
+//Returns SFE_UBLOX_STATUS_DATA_RECEIVED if we got an ACK and a valid packetCfg (module is responding with register content)
+//Returns SFE_UBLOX_STATUS_DATA_SENT if we got an ACK and no packetCfg (no valid packetCfg needed, module absorbs new register data)
+//Returns SFE_UBLOX_STATUS_FAIL if we got an invalid packetCfg (checksum failure)
+//Returns SFE_UBLOX_STATUS_COMMAND_UNKNOWN if we got a NACK (command unknown)
+//Returns SFE_UBLOX_STATUS_TIMEOUT if we timed out
 sfe_ublox_status_e SFE_UBLOX_GPS::waitForACKResponse(uint8_t requestedClass, uint8_t requestedID, uint16_t maxTime)
 {
   commandAck = UBX_ACK_NONE; //Reset flag
-  packetCfg.valid = false;   //This will go true when we receive a response to the packet we sent
-  packetAck.valid = false;
+  packetCfg.valid = SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;   //This will go VALID (or NOT_VALID) when we receive a response to the packet we sent
+  packetAck.valid = SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
 
   unsigned long startTime = millis();
   while (millis() - startTime < maxTime)
@@ -1056,43 +1109,54 @@ sfe_ublox_status_e SFE_UBLOX_GPS::waitForACKResponse(uint8_t requestedClass, uin
           _debugSerial->println(F(" msec"));
         }
 
-        //Are we expecting data back or just an ACK?
-        if (packetCfg.len == 1)
+        //We've got the a valid ACK for this CLS/ID, so is packetCfg valid?
+        if (packetCfg.valid == SFE_UBLOX_PACKET_VALIDITY_VALID)
         {
-          //We are expecting a data response so now we verify the response packet was valid
-          if (packetCfg.valid == true)
+          //We've got a valid packetCfg, so does it match the requested Class and ID?
+          if (packetCfg.cls == requestedClass && packetCfg.id == requestedID)
           {
-            if (packetCfg.cls == requestedClass && packetCfg.id == requestedID)
+            if (_printDebug == true)
             {
-              if (_printDebug == true)
-              {
-                _debugSerial->print(F("waitForACKResponse: CLS/ID match after "));
-                _debugSerial->print(millis() - startTime);
-                _debugSerial->println(F(" msec"));
-              }
-              return (SFE_UBLOX_STATUS_DATA_RECEIVED); //Received a data and a correct ACK!
+              _debugSerial->print(F("waitForACKResponse: CLS/ID match after "));
+              _debugSerial->print(millis() - startTime);
+              _debugSerial->println(F(" msec"));
             }
-            else
-            {
-              //Reset packet and continue checking incoming data for matching cls/id
-              debugPrintln((char *)F("waitForACKResponse: CLS/ID mismatch, continue to wait..."));
-              packetCfg.valid = false; //This will go true when we receive a response to the packet we sent
-            }
+            return (SFE_UBLOX_STATUS_DATA_RECEIVED); //Received a data and a correct ACK!
           }
           else
+          // The Class and/or ID don't match the requested ones, so keep trying...
           {
-            //We were expecting data but didn't get a valid config packet
-            debugPrintln((char *)F("waitForACKResponse: Invalid config packet"));
-            return (SFE_UBLOX_STATUS_FAIL); //We got an ACK, we're never going to get valid config data
+            //Reset packet and continue checking incoming data for matching cls/id
+            if (_printDebug == true)
+            {
+              _debugSerial->println(F("waitForACKResponse: CLS/ID mismatch, continue to wait..."));
+            }
+            packetCfg.valid = SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED; //This will go VALID (or NOT_VALID) when we receive a response to the packet we sent
           }
         }
+        //If we received an invalid packetCfg (checksum failure) then we can't trust it, including its Class and ID
+        else if (packetCfg.valid == SFE_UBLOX_PACKET_VALIDITY_NOT_VALID)
+        {
+          //We were expecting data but didn't get a valid config packet
+          if (_printDebug == true)
+          {
+            _debugSerial->println(F("waitForACKResponse: Invalid config packet"));
+          }
+          return (SFE_UBLOX_STATUS_FAIL); //We got a checksum failure, we're never going to get valid config data
+        }
+        //We didn't receive a valid or invalid packetCfg, so we must have only received the ACK
+        //Let's hope this was a set?
         else
         {
           //We have sent new data. We expect an ACK but no return config packet.
-          debugPrintln((char *)F("waitForACKResponse: New data successfully sent"));
+          if (_printDebug == true)
+          {
+            _debugSerial->println(F("waitForACKResponse: New data successfully sent"));
+          }
           return (SFE_UBLOX_STATUS_DATA_SENT); //New data successfully sent
         }
       }
+      //Did we receive a NACK?
       else if (commandAck == UBX_ACK_NACK)
       {
         if (_printDebug == true)
@@ -1110,9 +1174,12 @@ sfe_ublox_status_e SFE_UBLOX_GPS::waitForACKResponse(uint8_t requestedClass, uin
 
   //TODO add check here if config went valid but we never got the following ack
   //Through debug warning, This command might not get an ACK
-  if (packetCfg.valid == true)
+  if (packetCfg.valid == SFE_UBLOX_PACKET_VALIDITY_VALID)
   {
-    debugPrintln((char *)F("waitForACKResponse: Config was valid but ACK not received"));
+    if (_printDebug == true)
+    {
+      _debugSerial->println(F("waitForACKResponse: Config was valid but ACK not received"));
+    }
   }
 
   if (_printDebug == true)
@@ -1126,12 +1193,13 @@ sfe_ublox_status_e SFE_UBLOX_GPS::waitForACKResponse(uint8_t requestedClass, uin
 }
 
 //For non-CFG queries no ACK is sent so we use this function
-//Returns true if we got a config packet full of response data that has CLS/ID match to our query packet
-//Returns false if we timed out
+//Returns SFE_UBLOX_STATUS_DATA_RECEIVED if we got a config packet full of response data that has CLS/ID match to our query packet
+//Returns SFE_UBLOX_STATUS_CRC_FAIL if we got a corrupt config packet that has CLS/ID match to our query packet
+//Returns SFE_UBLOX_STATUS_TIMEOUT if we timed out
 sfe_ublox_status_e SFE_UBLOX_GPS::waitForNoACKResponse(uint8_t requestedClass, uint8_t requestedID, uint16_t maxTime)
 {
-  packetCfg.valid = false; //This will go true when we receive a response to the packet we sent
-  packetAck.valid = false;
+  packetCfg.valid = SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED; //This will go VALID (or NOT_VALID) when we receive a response to the packet we sent
+  packetAck.valid = SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED;
   packetCfg.cls = 255;
   packetCfg.id = 255;
 
@@ -1141,10 +1209,10 @@ sfe_ublox_status_e SFE_UBLOX_GPS::waitForNoACKResponse(uint8_t requestedClass, u
     if (checkUblox() == true) //See if new data is available. Process bytes as they come in.
     {
       //Did we receive a config packet that matches the cls/id we requested?
-      if (packetCfg.cls == requestedClass && packetCfg.id == requestedID)
+      if ((packetCfg.cls == requestedClass) && (packetCfg.id == requestedID) && (packetCfg.valid != SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED))
       {
         //This packet might be good or it might be CRC corrupt
-        if (packetCfg.valid == true)
+        if (packetCfg.valid == SFE_UBLOX_PACKET_VALIDITY_VALID)
         {
           if (_printDebug == true)
           {
@@ -1154,18 +1222,22 @@ sfe_ublox_status_e SFE_UBLOX_GPS::waitForNoACKResponse(uint8_t requestedClass, u
           }
           return (SFE_UBLOX_STATUS_DATA_RECEIVED); //We have new data to act upon
         }
-        else
+        else // if (packetCfg.valid == SFE_UBLOX_PACKET_VALIDITY_NOT_VALID)
         {
-          debugPrintln((char *)F("waitForNoACKResponse: CLS/ID match but failed CRC"));
+          if (_printDebug == true)
+          {
+            _debugSerial->println(F("waitForNoACKResponse: CLS/ID match but failed CRC"));
+          }
           return (SFE_UBLOX_STATUS_CRC_FAIL); //We got the right packet but it was corrupt
         }
       }
-      else if (packetCfg.cls < 255 && packetCfg.id < 255)
+      else if ((packetCfg.cls < 255) && (packetCfg.id < 255) && (packetCfg.valid != SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED))
       {
+        //We got a valid or invalid packet but it was not the droid we were looking for
         //Reset packet and continue checking incoming data for matching cls/id
         if (_printDebug == true)
         {
-          debugPrint((char *)F("waitForNoACKResponse: CLS/ID mismatch: "));
+          _debugSerial->print(F("waitForNoACKResponse: CLS/ID mismatch: "));
           _debugSerial->print(F("CLS: "));
           _debugSerial->print(packetCfg.cls, HEX);
           _debugSerial->print(F(" ID: "));
@@ -1173,7 +1245,7 @@ sfe_ublox_status_e SFE_UBLOX_GPS::waitForNoACKResponse(uint8_t requestedClass, u
           _debugSerial->println();
         }
 
-        packetCfg.valid = false; //This will go true when we receive a response to the packet we sent
+        packetCfg.valid = SFE_UBLOX_PACKET_VALIDITY_NOT_DEFINED; //This will go VALID (or NOT_VALID) when we receive a response to the packet we sent
         packetCfg.cls = 255;
         packetCfg.id = 255;
       }
@@ -1208,10 +1280,7 @@ boolean SFE_UBLOX_GPS::saveConfiguration(uint16_t maxWait)
   packetCfg.payload[4] = 0xFF; //Set any bit in the saveMask field to save current config to Flash and BBR
   packetCfg.payload[5] = 0xFF;
 
-  if (sendCommand(packetCfg, maxWait) == false)
-    return (false); //If command send fails then bail
-
-  return (true);
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Save the selected configuration sub-sections to flash and BBR (battery backed RAM)
@@ -1232,10 +1301,7 @@ boolean SFE_UBLOX_GPS::saveConfigSelective(uint32_t configMask, uint16_t maxWait
   packetCfg.payload[6] = (configMask >> 16) & 0xFF;
   packetCfg.payload[7] = (configMask >> 24) & 0xFF;
 
-  if (sendCommand(packetCfg, maxWait) == false)
-    return (false); //If command send fails then bail
-
-  return (true);
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Reset module to factory defaults
@@ -1256,10 +1322,7 @@ boolean SFE_UBLOX_GPS::factoryDefault(uint16_t maxWait)
   packetCfg.payload[8] = 0xFF; //Set any bit in the loadMask field to discard current config and rebuild from lower non-volatile memory layers
   packetCfg.payload[9] = 0xFF;
 
-  if (sendCommand(packetCfg, maxWait) == false)
-    return (false); //If command send fails then bail
-
-  return (true);
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Given a group, ID and size, return the value of this config spot
@@ -1298,8 +1361,19 @@ uint8_t SFE_UBLOX_GPS::getVal8(uint32_t key, uint8_t layer, uint16_t maxWait)
   for (uint8_t x = 0; x < packetCfg.len; x++)
     packetCfg.payload[x] = 0;
 
+  //VALGET uses different memory layer definitions to VALSET
+  //because it can only return the value for one layer.
+  //So we need to fiddle the layer here.
+  //And just to complicate things further, the ZED-F9P only responds
+  //correctly to layer 0 (RAM) and layer 7 (Default)!
+  uint8_t getLayer = 7; // 7 is the "Default Layer"
+  if ((layer & VAL_LAYER_RAM) == VAL_LAYER_RAM) // Did the user request the RAM layer?
+  {
+    getLayer = 0; // Layer 0 is RAM
+  }
+
   payloadCfg[0] = 0;     //Message Version - set to 0
-  payloadCfg[1] = layer; //By default we ask for the BBR layer
+  payloadCfg[1] = getLayer; //Layer
 
   //Load key into outgoing payload
   payloadCfg[4] = key >> 8 * 0; //Key LSB
@@ -1315,8 +1389,15 @@ uint8_t SFE_UBLOX_GPS::getVal8(uint32_t key, uint8_t layer, uint16_t maxWait)
   }
 
   //Send VALGET command with this key
-  if (sendCommand(packetCfg, maxWait) == false)
-    return (false); //If command send fails then bail
+
+  sfe_ublox_status_e retVal = sendCommand(packetCfg, maxWait);
+  if (_printDebug == true)
+  {
+    _debugSerial->print(F("getVal8: sendCommand returned: "));
+    _debugSerial->println(statusString(retVal));
+  }
+  if (retVal != SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
+    return (0); //If command send fails then bail
 
   //Verify the response is the correct length as compared to what the user called (did the module respond with 8-bits but the user called getVal32?)
   //Response is 8 bytes plus cfg data
@@ -1365,11 +1446,7 @@ uint8_t SFE_UBLOX_GPS::setVal16(uint32_t key, uint16_t value, uint8_t layer, uin
   payloadCfg[9] = value >> 8 * 1;
 
   //Send VALSET command with this key and value
-  if (sendCommand(packetCfg, maxWait) == false)
-    return (false); //If command send fails then bail
-
-  //All done
-  return (true);
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Given a key, set an 8-bit value
@@ -1400,11 +1477,7 @@ uint8_t SFE_UBLOX_GPS::setVal8(uint32_t key, uint8_t value, uint8_t layer, uint1
   payloadCfg[8] = value; //Value
 
   //Send VALSET command with this key and value
-  if (sendCommand(packetCfg, maxWait) == false)
-    return (false); //If command send fails then bail
-
-  //All done
-  return (true);
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Given a key, set a 32-bit value
@@ -1438,11 +1511,7 @@ uint8_t SFE_UBLOX_GPS::setVal32(uint32_t key, uint32_t value, uint8_t layer, uin
   payloadCfg[11] = value >> 8 * 3;
 
   //Send VALSET command with this key and value
-  if (sendCommand(packetCfg, maxWait) == false)
-    return (false); //If command send fails then bail
-
-  //All done
-  return (true);
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Start defining a new UBX-CFG-VALSET ubxPacket
@@ -1614,11 +1683,7 @@ uint8_t SFE_UBLOX_GPS::sendCfgValset32(uint32_t key, uint32_t value, uint16_t ma
   addCfgValset32(key, value);
 
   //Send VALSET command with this key and value
-  if (sendCommand(packetCfg, maxWait) == false)
-    return (false); //If command send fails then bail
-
-  //All done
-  return (true);
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Add a final keyID and value to an existing UBX-CFG-VALSET ubxPacket and send it
@@ -1629,11 +1694,7 @@ uint8_t SFE_UBLOX_GPS::sendCfgValset16(uint32_t key, uint16_t value, uint16_t ma
   addCfgValset16(key, value);
 
   //Send VALSET command with this key and value
-  if (sendCommand(packetCfg, maxWait) == false)
-    return (false); //If command send fails then bail
-
-  //All done
-  return (true);
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Add a final keyID and value to an existing UBX-CFG-VALSET ubxPacket and send it
@@ -1644,11 +1705,7 @@ uint8_t SFE_UBLOX_GPS::sendCfgValset8(uint32_t key, uint8_t value, uint16_t maxW
   addCfgValset8(key, value);
 
   //Send VALSET command with this key and value
-  if (sendCommand(packetCfg, maxWait) == false)
-    return (false); //If command send fails then bail
-
-  //All done
-  return (true);
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Get the current TimeMode3 settings - these contain survey in statuses
@@ -1659,7 +1716,7 @@ boolean SFE_UBLOX_GPS::getSurveyMode(uint16_t maxWait)
   packetCfg.len = 0;
   packetCfg.startingSpot = 0;
 
-  return (sendCommand(packetCfg, maxWait));
+  return ((sendCommand(packetCfg, maxWait)) == SFE_UBLOX_STATUS_DATA_RECEIVED); // We are expecting data and an ACK
 }
 
 //Control Survey-In for NEO-M8P
@@ -1688,7 +1745,7 @@ boolean SFE_UBLOX_GPS::setSurveyMode(uint8_t mode, uint16_t observationTime, flo
   payloadCfg[29] = svinAccLimit >> 8;
   payloadCfg[30] = svinAccLimit >> 16;
 
-  return (sendCommand(packetCfg, maxWait)); //Wait for ack
+  return ((sendCommand(packetCfg, maxWait)) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Begin Survey-In for NEO-M8P
@@ -1719,7 +1776,7 @@ boolean SFE_UBLOX_GPS::getSurveyStatus(uint16_t maxWait)
   packetCfg.len = 0;
   packetCfg.startingSpot = 0;
 
-  if (sendCommand(packetCfg, maxWait) == false)
+  if ((sendCommand(packetCfg, maxWait)) != SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
     return (false); //If command send fails then bail
 
   //We got a response, now parse the bits into the svin structure
@@ -1744,7 +1801,7 @@ boolean SFE_UBLOX_GPS::getPortSettings(uint8_t portID, uint16_t maxWait)
 
   payloadCfg[0] = portID;
 
-  return (sendCommand(packetCfg, maxWait));
+  return ((sendCommand(packetCfg, maxWait)) == SFE_UBLOX_STATUS_DATA_RECEIVED); // We are expecting data and an ACK
 }
 
 //Configure a given port to output UBX, NMEA, RTCM3 or a combination thereof
@@ -1758,7 +1815,10 @@ boolean SFE_UBLOX_GPS::setPortOutput(uint8_t portID, uint8_t outStreamSettings, 
 
   if (commandAck != UBX_ACK_ACK)
   {
-    debugPrintln((char *)F("setPortOutput failed to ACK"));
+    if (_printDebug == true)
+    {
+      _debugSerial->println(F("setPortOutput failed to ACK"));
+    }
     return (false);
   }
 
@@ -1770,7 +1830,7 @@ boolean SFE_UBLOX_GPS::setPortOutput(uint8_t portID, uint8_t outStreamSettings, 
   //payloadCfg is now loaded with current bytes. Change only the ones we need to
   payloadCfg[14] = outStreamSettings; //OutProtocolMask LSB - Set outStream bits
 
-  return (sendCommand(packetCfg, maxWait));
+  return ((sendCommand(packetCfg, maxWait)) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Configure a given port to input UBX, NMEA, RTCM3 or a combination thereof
@@ -1791,7 +1851,7 @@ boolean SFE_UBLOX_GPS::setPortInput(uint8_t portID, uint8_t inStreamSettings, ui
   //payloadCfg is now loaded with current bytes. Change only the ones we need to
   payloadCfg[12] = inStreamSettings; //InProtocolMask LSB - Set inStream bits
 
-  return (sendCommand(packetCfg, maxWait));
+  return ((sendCommand(packetCfg, maxWait)) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Configure a port to output UBX, NMEA, RTCM3 or a combination thereof
@@ -1832,8 +1892,9 @@ boolean SFE_UBLOX_GPS::setNavigationFrequency(uint8_t navFreq, uint16_t maxWait)
   packetCfg.len = 0;
   packetCfg.startingSpot = 0;
 
-  if (sendCommand(packetCfg, maxWait) == false) //This will load the payloadCfg array with current settings of the given register
-    return (false);                             //If command send fails then bail
+  //This will load the payloadCfg array with current settings of the given register
+  if (sendCommand(packetCfg, maxWait) != SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
+    return (false); //If command send fails then bail
 
   uint16_t measurementRate = 1000 / navFreq;
 
@@ -1841,7 +1902,7 @@ boolean SFE_UBLOX_GPS::setNavigationFrequency(uint8_t navFreq, uint16_t maxWait)
   payloadCfg[0] = measurementRate & 0xFF; //measRate LSB
   payloadCfg[1] = measurementRate >> 8;   //measRate MSB
 
-  return (sendCommand(packetCfg, maxWait));
+  return ((sendCommand(packetCfg, maxWait)) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Get the rate at which the module is outputting nav solutions
@@ -1853,8 +1914,9 @@ uint8_t SFE_UBLOX_GPS::getNavigationFrequency(uint16_t maxWait)
   packetCfg.len = 0;
   packetCfg.startingSpot = 0;
 
-  if (sendCommand(packetCfg, maxWait) == false) //This will load the payloadCfg array with current settings of the given register
-    return (0);                                 //If command send fails then bail
+  //This will load the payloadCfg array with current settings of the given register
+  if (sendCommand(packetCfg, maxWait) != SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
+    return (0); //If command send fails then bail
 
   uint16_t measurementRate = 0;
 
@@ -1897,7 +1959,7 @@ boolean SFE_UBLOX_GPS::setAutoPVT(boolean enable, boolean implicitUpdate, uint16
   payloadCfg[1] = UBX_NAV_PVT;
   payloadCfg[2] = enable ? 1 : 0; // rate relative to navigation freq.
 
-  bool ok = sendCommand(packetCfg, maxWait);
+  boolean ok = ((sendCommand(packetCfg, maxWait)) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
   if (ok)
   {
     autoPVT = enable;
@@ -1923,7 +1985,7 @@ boolean SFE_UBLOX_GPS::configureMessage(uint8_t msgClass, uint8_t msgID, uint8_t
   packetCfg.payload[1] = msgID;
   packetCfg.payload[2 + portID] = sendRate; //Send rate is relative to the event a message is registered on. For example, if the rate of a navigation message is set to 2, the message is sent every 2nd navigation solution.
 
-  return (sendCommand(packetCfg, maxWait));
+  return ((sendCommand(packetCfg, maxWait)) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Enable a given message type, default of 1 per update rate (usually 1 per second)
@@ -2061,7 +2123,7 @@ boolean SFE_UBLOX_GPS::addGeofence(int32_t latitude, int32_t longitude, uint32_t
     payloadCfg[54] = currentGeofenceParams.rads[3] >> 16;
     payloadCfg[55] = currentGeofenceParams.rads[3] >> 24;
   }
-  return (sendCommand(packetCfg, maxWait)); //Wait for ack
+  return ((sendCommand(packetCfg, maxWait)) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Clear all geofences using UBX-CFG-GEOFENCE
@@ -2083,7 +2145,7 @@ boolean SFE_UBLOX_GPS::clearGeofences(uint16_t maxWait)
 
   currentGeofenceParams.numFences = 0; // Zero the number of geofences currently in use
 
-  return (sendCommand(packetCfg, maxWait)); //Wait for ack
+  return ((sendCommand(packetCfg, maxWait)) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Clear the antenna control settings using UBX-CFG-ANT
@@ -2101,7 +2163,7 @@ boolean SFE_UBLOX_GPS::clearAntPIO(uint16_t maxWait)
   payloadCfg[2] = 0xFF; // Antenna pin configuration: set pinSwitch and pinSCD to 31
   payloadCfg[3] = 0xFF; // Antenna pin configuration: set pinOCD to 31, set reconfig bit
 
-  return (sendCommand(packetCfg, maxWait)); //Wait for ack
+  return ((sendCommand(packetCfg, maxWait)) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Returns the combined geofence state using UBX-NAV-GEOFENCE
@@ -2112,7 +2174,8 @@ boolean SFE_UBLOX_GPS::getGeofenceState(geofenceState &currentGeofenceState, uin
   packetCfg.len = 0;
   packetCfg.startingSpot = 0;
 
-  if (sendCommand(packetCfg, maxWait) == false) //Ask module for the geofence status. Loads into payloadCfg.
+  //Ask module for the geofence status. Loads into payloadCfg.
+  if (sendCommand(packetCfg, maxWait) != SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
     return (false);
 
   currentGeofenceState.status = payloadCfg[5];    // Extract the status
@@ -2145,7 +2208,10 @@ boolean SFE_UBLOX_GPS::powerSaveMode(bool power_save, uint16_t maxWait)
   */
   if (protVer >= 27)
   {
-    debugPrintln((char *)F("powerSaveMode (UBX-CFG-RXM) is not supported by this protocol version"));
+    if (_printDebug == true)
+    {
+      _debugSerial->println(F("powerSaveMode (UBX-CFG-RXM) is not supported by this protocol version"));
+    }
     return (false);
   }
 
@@ -2155,7 +2221,8 @@ boolean SFE_UBLOX_GPS::powerSaveMode(bool power_save, uint16_t maxWait)
   packetCfg.len = 0;
   packetCfg.startingSpot = 0;
 
-  if (sendCommand(packetCfg, maxWait) == false) //Ask module for the current power management settings. Loads into payloadCfg.
+  //Ask module for the current power management settings. Loads into payloadCfg.
+  if (sendCommand(packetCfg, maxWait) != SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
     return (false);
 
   if (power_save)
@@ -2170,7 +2237,7 @@ boolean SFE_UBLOX_GPS::powerSaveMode(bool power_save, uint16_t maxWait)
   packetCfg.len = 2;
   packetCfg.startingSpot = 0;
 
-  return (sendCommand(packetCfg, maxWait)); //Wait for ack
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Change the dynamic platform model using UBX-CFG-NAV5
@@ -2186,7 +2253,8 @@ boolean SFE_UBLOX_GPS::setDynamicModel(dynModel newDynamicModel, uint16_t maxWai
   packetCfg.len = 0;
   packetCfg.startingSpot = 0;
 
-  if (sendCommand(packetCfg, maxWait) == false) //Ask module for the current navigation model settings. Loads into payloadCfg.
+  //Ask module for the current navigation model settings. Loads into payloadCfg.
+  if (sendCommand(packetCfg, maxWait) != SFE_UBLOX_STATUS_DATA_RECEIVED) // We are expecting data and an ACK
     return (false);
 
   payloadCfg[0] = 0x01;            // mask: set only the dyn bit (0)
@@ -2196,7 +2264,7 @@ boolean SFE_UBLOX_GPS::setDynamicModel(dynModel newDynamicModel, uint16_t maxWai
   packetCfg.len = 36;
   packetCfg.startingSpot = 0;
 
-  return (sendCommand(packetCfg, maxWait)); //Wait for ack
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_SENT); // We are only expecting an ACK
 }
 
 //Given a spot in the payload array, extract four bytes and build a long
@@ -2303,19 +2371,28 @@ boolean SFE_UBLOX_GPS::getPVT(uint16_t maxWait)
   if (autoPVT && autoPVTImplicitUpdate)
   {
     //The GPS is automatically reporting, we just check whether we got unread data
-    debugPrintln((char *)F("getPVT: Autoreporting"));
+    if (_printDebug == true)
+    {
+      _debugSerial->println(F("getPVT: Autoreporting"));
+    }
     checkUblox();
     return moduleQueried.all;
   }
   else if (autoPVT && !autoPVTImplicitUpdate)
   {
     //Someone else has to call checkUblox for us...
-    debugPrintln((char *)F("getPVT: Exit immediately"));
+    if (_printDebug == true)
+    {
+      _debugSerial->println(F("getPVT: Exit immediately"));
+    }
     return (false);
   }
   else
   {
-    debugPrintln((char *)F("getPVT: Polling"));
+    if (_printDebug == true)
+    {
+      _debugSerial->println(F("getPVT: Polling"));
+    }
 
     //The GPS is not automatically reporting navigation position so we have to poll explicitly
     packetCfg.cls = UBX_CLASS_NAV;
@@ -2409,8 +2486,7 @@ boolean SFE_UBLOX_GPS::getHPPOSLLH(uint16_t maxWait)
   packetCfg.id = UBX_NAV_HPPOSLLH;
   packetCfg.len = 0;
 
-  return sendCommand(packetCfg, maxWait);
-  return (false); //If command send fails then bail
+  return (sendCommand(packetCfg, maxWait) == SFE_UBLOX_STATUS_DATA_RECEIVED); // We are only expecting data (no ACK)
 }
 
 //Get the current 3D high precision positional accuracy - a fun thing to watch
@@ -2422,7 +2498,7 @@ uint32_t SFE_UBLOX_GPS::getPositionAccuracy(uint16_t maxWait)
   packetCfg.len = 0;
   packetCfg.startingSpot = 0;
 
-  if (sendCommand(packetCfg, maxWait) == false)
+  if (sendCommand(packetCfg, maxWait) != SFE_UBLOX_STATUS_DATA_RECEIVED) // We are only expecting data (no ACK)
     return (0); //If command send fails then bail
 
   uint32_t tempAccuracy = extractLong(24); //We got a response, now extract a long beginning at a given position
@@ -2582,7 +2658,7 @@ boolean SFE_UBLOX_GPS::getProtocolVersion(uint16_t maxWait)
   packetCfg.len = 0;
   packetCfg.startingSpot = 40; //Start at first "extended software information" string
 
-  if (sendCommand(packetCfg, maxWait) == false)
+  if (sendCommand(packetCfg, maxWait) != SFE_UBLOX_STATUS_DATA_RECEIVED) // We are only expecting data (no ACK)
     return (false); //If command send fails then bail
 
   //Payload should now contain ~220 characters (depends on module type)
@@ -2658,7 +2734,7 @@ boolean SFE_UBLOX_GPS::getRELPOSNED(uint16_t maxWait)
   packetCfg.len = 0;
   packetCfg.startingSpot = 0;
 
-  if (sendCommand(packetCfg, maxWait) == false)
+  if (sendCommand(packetCfg, maxWait) != SFE_UBLOX_STATUS_DATA_RECEIVED) // We are only expecting data (no ACK)
     return (false); //If command send fails then bail
 
   //We got a response, now parse the bits
